@@ -57,6 +57,7 @@ entity aes50_rx_deframer is
 		rst_i			: in  std_logic;
 
 		fs48_i			: in  std_logic;		-- '1' 48k, '0' 44.1k (static)
+		fs96_i			: in  std_logic := '0';	-- OpenProSeries: '1' (with fs48_i = '1') 96k: the 48k frame, format 0x56
 
 		rmii_crs_dv_i	: in  std_logic;
 		rmii_rxd_i		: in  std_logic_vector(1 downto 0);
@@ -241,8 +242,9 @@ begin
 									frame_assm <= '1';
 								end if;
 							when 18 =>						-- audio format must match fs_mode
-								if (fs48_i = '1' and (rxd_r & hdr_shift(7 downto 2)) /= x"46") or
-								   (fs48_i = '0' and (rxd_r & hdr_shift(7 downto 2)) /= x"06") then
+								if (fs96_i = '1' and (rxd_r & hdr_shift(7 downto 2)) /= FMT_96K) or
+								   (fs96_i = '0' and fs48_i = '1' and (rxd_r & hdr_shift(7 downto 2)) /= FMT_48K) or
+								   (fs48_i = '0' and (rxd_r & hdr_shift(7 downto 2)) /= FMT_44K1) then
 									header_ok <= '0';
 								end if;
 							when others => null;
