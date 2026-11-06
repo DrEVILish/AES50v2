@@ -112,8 +112,8 @@ entity aes50_top is
 		mult_clk625_44k1_i					: in  natural;							-- 7576322
 
 		--uart speed configuration
-		uart_clks_per_bit_i					: in  natural;							-- 434 for 115200 baud
-		uart_timeout_clks_i					: in  natural							-- 500000 for 10 ms
+		uart_clks_per_bit_i					: in  natural range 0 to 65535;			-- 434 for 115200 baud (the UART's own range)
+		uart_timeout_clks_i					: in  natural range 0 to 16777215		-- 500000 for 10 ms (the UART's own range)
 	);
 end aes50_top;
 
