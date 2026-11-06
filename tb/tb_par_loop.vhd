@@ -36,7 +36,8 @@ architecture sim of tb_par_loop is
 		oph				: std_logic;
 		os				: std_logic_vector(23 downto 0);
 		areq			: std_logic;
-		arv, arf		: std_logic;
+		acnt			: unsigned(5 downto 0);
+		arf				: std_logic;
 		ard				: std_logic_vector(15 downto 0);
 		ok, rxok, txst	: std_logic;
 	end record;
@@ -49,6 +50,9 @@ architecture sim of tb_par_loop is
 	type s24_t is array (0 to 1) of std_logic_vector(23 downto 0);
 	type s16_t is array (0 to 1) of std_logic_vector(15 downto 0);
 	signal pwe, pawe	: std_logic_vector(0 to 1) := "00";
+	-- aux readers (like the aux decoder: pull a word, take it two clocks later), one element per side
+	signal prd, rv, rf	: std_logic_vector(0 to 1) := "00";
+	signal rdw			: s16_t := (others => (others => '0'));
 	signal pch			: s6_t := (others => (others => '0'));
 	signal ps			: s24_t := (others => (others => '0'));
 	signal pad			: s16_t := (others => (others => '0'));
@@ -85,7 +89,7 @@ begin
 				  sample_tick_o => A.tick, par_in_we_i => pwe(0), par_in_ch_i => pch(0), par_in_sample_i => ps(0),
 				  par_out_valid_o => A.ov, par_out_ch_o => A.och, par_out_phase_o => A.oph, par_out_sample_o => A.os,
 				  aux_tx_req_o => A.areq, aux_tx_we_i => pawe(0), aux_tx_data_i => pad(0),
-				  aux_rx_valid_o => A.arv, aux_rx_first_o => A.arf, aux_rx_data_o => A.ard,
+				  aux_rx_count_o => A.acnt, aux_rx_rd_i => prd(0), aux_rx_first_o => A.arf, aux_rx_data_o => A.ard,
 				  aes_ok_o => A.ok, rx_ok_o => A.rxok, tx_started_o => A.txst, tx_frame_o => open, rx_frame_ok_o => open,
 				  rx_frame_err_o => open, rx_block_o => open, rx_block_drop_o => open, rx_assm_o => open,
 				  fmt_valid_o => open, fmt_bad_o => open, fmt_o => open);
@@ -99,7 +103,7 @@ begin
 				  sample_tick_o => B.tick, par_in_we_i => pwe(1), par_in_ch_i => pch(1), par_in_sample_i => ps(1),
 				  par_out_valid_o => B.ov, par_out_ch_o => B.och, par_out_phase_o => B.oph, par_out_sample_o => B.os,
 				  aux_tx_req_o => B.areq, aux_tx_we_i => pawe(1), aux_tx_data_i => pad(1),
-				  aux_rx_valid_o => B.arv, aux_rx_first_o => B.arf, aux_rx_data_o => B.ard,
+				  aux_rx_count_o => B.acnt, aux_rx_rd_i => prd(1), aux_rx_first_o => B.arf, aux_rx_data_o => B.ard,
 				  aes_ok_o => B.ok, rx_ok_o => B.rxok, tx_started_o => B.txst, tx_frame_o => open, rx_frame_ok_o => open,
 				  rx_frame_err_o => open, rx_block_o => open, rx_block_drop_o => open, rx_assm_o => open,
 				  fmt_valid_o => open, fmt_bad_o => open, fmt_o => open);
@@ -136,6 +140,27 @@ begin
 		end process;
 	end generate;
 
+	gen_rd : for side in 0 to 1 generate
+		process (clk)
+			variable ph : natural := 0;
+			variable cnt : unsigned(5 downto 0);
+		begin
+			if rising_edge(clk) then
+				if side = 0 then cnt := A.acnt; else cnt := B.acnt; end if;
+				prd(side) <= '0'; rv(side) <= '0';
+				case ph is
+					when 0 => if cnt /= 0 then prd(side) <= '1'; ph := 1; end if;
+					when 1 => ph := 2;
+					when 2 =>
+						rv(side) <= '1';
+						if side = 0 then rf(side) <= A.arf; rdw(side) <= A.ard; else rf(side) <= B.arf; rdw(side) <= B.ard; end if;
+						ph := 3;
+					when others => ph := 0;
+				end case;
+			end if;
+		end process;
+	end generate;
+
 	-- checkers: side 0 checks what A receives (from B, marker '1'), side 1 what B receives
 	gen_chk : for side in 0 to 1 generate
 		process (clk)
@@ -151,8 +176,9 @@ begin
 			variable afirst	: boolean := true;
 		begin
 			if rising_edge(clk) then
-				if side = 0 then v := A.ov; och := A.och; oph := A.oph; os := A.os; arv := A.arv; arf := A.arf; ard := A.ard;
-				else v := B.ov; och := B.och; oph := B.oph; os := B.os; arv := B.arv; arf := B.arf; ard := B.ard; end if;
+				if side = 0 then v := A.ov; och := A.och; oph := A.oph; os := A.os;
+				else v := B.ov; och := B.och; oph := B.oph; os := B.os; end if;
+				arv := rv(side); arf := rf(side); ard := rdw(side);
 				if fs96 = '1' then n := 24; else n := 48; end if;
 				if v = '1' then
 					wch := to_integer(unsigned(och));
