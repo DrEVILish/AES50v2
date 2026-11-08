@@ -78,6 +78,10 @@ entity aes50_rx_deframer is
 
 		frame_ok_o		: out std_logic;				-- pulse per frame with good FCS
 		frame_err_o		: out std_logic;				-- pulse per frame with bad FCS / truncated
+		-- OpenProSeries: pulse per good frame that ended one 32-bit word early (the frames of the AES50 v1 IP and
+		-- its forks: row 10's global parity block missing, its FCS right after row 10 block 30; 1430 bytes after
+		-- the SFD instead of 1434). Such a frame is accepted (frame_ok_o too): the receiver never uses parity.
+		frame_short_o	: out std_logic;
 		-- OpenProSeries: format detection. At the end of every header with the AES50 EtherType and protocol
 		-- id: fmt_valid_o pulses when octet 18 is a known format (0x06 / 0x46 / 0x56) and octet 21 is its
 		-- CRC-8 (for the frame's ASSM flag), whatever fs48_i / fs96_i select; fmt_o holds octet 18 until the
@@ -107,6 +111,9 @@ architecture rtl of aes50_rx_deframer is
 	signal hdr_fmt				: std_logic_vector(7 downto 0);	-- octet 18
 	signal fcs_crc				: std_logic_vector(31 downto 0);
 	signal fcs_ok				: std_logic;
+	-- OpenProSeries: the CRC after row 10 block 30 and whether row 10 block 31 matched it as an FCS
+	signal crc30				: std_logic_vector(31 downto 0);
+	signal short_ok				: std_logic;
 
 	-- block bookkeeping
 	signal synced				: std_logic;				-- an ASSM frame has been seen
@@ -200,6 +207,7 @@ begin
 		variable blk_kind		: natural range 0 to 4;
 		variable next_block		: unsigned(4 downto 0);
 		variable block_complete	: boolean;
+		variable frame_good		: boolean;
 		variable aux64			: std_logic_vector(63 downto 0);
 		variable new_lc25		: std_logic_vector(31 downto 0);
 	begin
@@ -212,10 +220,12 @@ begin
 			aux_we_o		<= '0';
 			blk_done_o		<= '0';
 			frame_ok_o		<= '0';
+			frame_short_o	<= '0';
 			frame_err_o		<= '0';
 			fmt_valid_o		<= '0';
 			fmt_bad_o		<= '0';
 			block_complete	:= false;
+			frame_good		:= false;
 
 			case state is
 
@@ -432,7 +442,20 @@ begin
 					bit0_idx	<= chunk_index(new_chunk_bit, fs48_i);
 					bit1_idx	<= chunk_index(new_chunk_bit + 1, fs48_i);
 
-					if rx_dv_r = '0' and dibit_idx(0) = '1' then	-- carrier lost inside the frame
+					-- OpenProSeries: a frame one word short sends its FCS where row 10 block 31 would be
+					if row_idx = 10 and block_idx = 30 and dibit_idx = 15 then
+						crc30		<= crc32_d2(fcs_crc, rxd_r);
+						short_ok	<= '1';
+					elsif row_idx = 10 and block_idx = 31 then
+						if rxd_r /= not crc30(1 downto 0) then
+							short_ok <= '0';
+						end if;
+						crc30 <= "00" & crc30(31 downto 2);
+					end if;
+
+					-- carrier lost inside the frame; not in row 10 block 31, which is a short frame's FCS, where the
+					-- PHY may toggle CRS_DV as it does in a full frame's FCS (ignored there, see S_FCS)
+					if rx_dv_r = '0' and dibit_idx(0) = '1' and not (row_idx = 10 and block_idx = 31) then
 						state		<= S_IDLE;
 						frame_err_o	<= '1';
 						block_ok	<= '0';
@@ -440,6 +463,10 @@ begin
 
 				-- ------------------------------------------------------------
 				when S_FCS =>								-- compare with the computed CRC
+					-- A short frame must have ended before this word, even when CRS_DV toggles over an FCS.
+					if rx_dv_r = '1' then
+						short_ok <= '0';
+					end if;
 					if rxd_r /= not fcs_crc(1 downto 0) then
 						fcs_ok <= '0';
 					end if;
@@ -447,8 +474,13 @@ begin
 					step_cnt <= step_cnt + 1;
 					if step_cnt = 15 then
 						state <= S_SKIP;
-						if rxd_r = not fcs_crc(1 downto 0) and fcs_ok = '1' then
+						frame_good := (rxd_r = not fcs_crc(1 downto 0) and fcs_ok = '1') or
+							(short_ok = '1' and rx_dv_r = '0');
+						if frame_good then
 							frame_ok_o <= '1';
+							if not (rxd_r = not fcs_crc(1 downto 0) and fcs_ok = '1') then
+								frame_short_o <= '1';
+							end if;
 						else
 							frame_err_o	<= '1';
 							block_ok	<= '0';
@@ -473,7 +505,7 @@ begin
 				blk_base_o	<= block_base;
 				blk_page_o	<= aux_page;
 				blk_assm_o	<= block_assm;
-				if fcs_ok = '0' or rxd_r /= not fcs_crc(1 downto 0) then
+				if not frame_good then
 					blk_ok_o <= '0';
 				else
 					blk_ok_o <= block_ok;
