@@ -109,6 +109,9 @@ entity aes50_core is
 
 		--aes health signal
 		aes_ok_o							: out std_logic;
+		-- OpenProSeries: one clk50 pulse per received block that was dropped (a frame of it had a bad FCS or was cut
+		-- short); its audio is not played, the TDM / I2S output carries zeros for that block instead
+		rx_blk_drop_o						: out std_logic;
 
 		--debug signals
 		dbg_o								: out std_logic_vector(7 downto 0);
@@ -240,6 +243,7 @@ architecture rtl of aes50_core is
 	signal rx_blk_base		: unsigned(AW - 1 downto 0);
 	signal rx_blk_page		: std_logic;
 	signal rx_blk_assm		: std_logic;
+	signal rx_blk_ok		: std_logic;
 	signal rx_blk_tgl		: std_logic := '0';
 	signal rx_base_hold		: unsigned(AW - 1 downto 0);
 	signal rx_page_hold		: std_logic;
@@ -505,14 +509,17 @@ begin
 			ram_we_o => rxr_we, ram_addr_o => rxr_waddr, ram_data_o => rxr_wdata,
 			aux_we_o => rxa_we, aux_addr_o => rxa_waddr, aux_data_o => rxa_wdata,
 			blk_done_o => rx_blk_done, blk_base_o => rx_blk_base, blk_page_o => rx_blk_page,
-			blk_ok_o => open, blk_assm_o => rx_blk_assm,
+			blk_ok_o => rx_blk_ok, blk_assm_o => rx_blk_assm,
 			frame_ok_o => open, frame_err_o => open, sync_o => open);
 
-	-- report received blocks to the TDM interface (toggle, data held until the next block)
+	-- report received blocks to the TDM interface (toggle, data held until the next block).
+	-- OpenProSeries: only good blocks; the samples of a block are written before its FCS is known, so a block with a
+	-- bad or truncated frame is dropped here and the TDM side plays zeros for it (as when no block is pending)
 	process (clk50_i)
 	begin
 		if rising_edge(clk50_i) then
-			if rx_blk_done = '1' then
+			rx_blk_drop_o <= rx_blk_done and not rx_blk_ok;
+			if rx_blk_done = '1' and rx_blk_ok = '1' then
 				rx_base_hold	<= rx_blk_base;
 				rx_page_hold	<= rx_blk_page;
 				rx_blk_tgl		<= not rx_blk_tgl;
