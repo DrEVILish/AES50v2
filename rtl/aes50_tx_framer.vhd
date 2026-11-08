@@ -62,6 +62,7 @@ entity aes50_tx_framer is
 		rst_i			: in  std_logic;
 
 		fs48_i			: in  std_logic;		-- '1' 48k, '0' 44.1k (static)
+		fs96_i			: in  std_logic := '0';	-- OpenProSeries: '1' (with fs48_i = '1') 96k: the 48k frame, format 0x56
 		i2s_i			: in  std_logic;		-- '1': only channels 0/1 are used, the others are sent as 0
 
 		start_i			: in  std_logic;		-- sample block complete
@@ -237,7 +238,7 @@ begin
 
 				-- ------------------------------------------------------------
 				when S_HEADER =>							-- 22 octets = 88 dibits
-					hdr_octet := hdr_byte(to_integer(step_cnt(6 downto 2)), fs48_i, assm_flag and not second_half);
+					hdr_octet := hdr_byte(to_integer(step_cnt(6 downto 2)), fs48_i, assm_flag and not second_half, fs96_i);
 					hdr_dibit := hdr_octet(2 * to_integer(step_cnt(1 downto 0)) + 1 downto 2 * to_integer(step_cnt(1 downto 0)));
 					out_kind	<= OUT_DATA;
 					out_dibit	<= hdr_dibit;
