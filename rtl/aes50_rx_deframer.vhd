@@ -57,6 +57,7 @@ entity aes50_rx_deframer is
 		rst_i			: in  std_logic;
 
 		fs48_i			: in  std_logic;		-- '1' 48k, '0' 44.1k (static)
+		fs96_i			: in  std_logic := '0';	-- OpenProSeries: '1' (with fs48_i = '1') 96k: the 48k frame, format 0x56
 
 		rmii_crs_dv_i	: in  std_logic;
 		rmii_rxd_i		: in  std_logic_vector(1 downto 0);
@@ -81,6 +82,13 @@ entity aes50_rx_deframer is
 		-- its forks: row 10's global parity block missing, its FCS right after row 10 block 30; 1430 bytes after
 		-- the SFD instead of 1434). Such a frame is accepted (frame_ok_o too): the receiver never uses parity.
 		frame_short_o	: out std_logic;
+		-- OpenProSeries: format detection. At the end of every header with the AES50 EtherType and protocol
+		-- id: fmt_valid_o pulses when octet 18 is a known format (0x06 / 0x46 / 0x56) and octet 21 is its
+		-- CRC-8 (for the frame's ASSM flag), whatever fs48_i / fs96_i select; fmt_o holds octet 18 until the
+		-- next header. fmt_bad_o pulses instead for an unknown format or a wrong CRC-8.
+		fmt_valid_o		: out std_logic;
+		fmt_bad_o		: out std_logic;
+		fmt_o			: out std_logic_vector(7 downto 0);
 		sync_o			: out std_logic
 	);
 end entity;
@@ -99,6 +107,8 @@ architecture rtl of aes50_rx_deframer is
 	signal hdr_shift			: std_logic_vector(7 downto 0);	-- header octet being received
 	signal header_ok			: std_logic;				-- EtherType, protocol and audio format match
 	signal frame_assm			: std_logic;				-- ASSM flag of the current frame
+	signal eth_ok				: std_logic;				-- EtherType and protocol id match
+	signal hdr_fmt				: std_logic_vector(7 downto 0);	-- octet 18
 	signal fcs_crc				: std_logic_vector(31 downto 0);
 	signal fcs_ok				: std_logic;
 	-- OpenProSeries: the CRC after row 10 block 30 and whether row 10 block 31 matched it as an FCS
@@ -212,6 +222,8 @@ begin
 			frame_ok_o		<= '0';
 			frame_short_o	<= '0';
 			frame_err_o		<= '0';
+			fmt_valid_o		<= '0';
+			fmt_bad_o		<= '0';
 			block_complete	:= false;
 			frame_good		:= false;
 
@@ -231,6 +243,7 @@ begin
 						step_cnt	<= (others => '0');
 						fcs_crc		<= (others => '1');
 						header_ok	<= '1';
+						eth_ok		<= '1';
 						frame_assm	<= '0';
 					elsif rxd_r /= "01" then
 						state <= S_IDLE;
@@ -243,16 +256,18 @@ begin
 					step_cnt	<= step_cnt + 1;
 					if step_cnt(1 downto 0) = "11" then		-- octet complete: rxd_r & hdr_shift(7..2)
 						case to_integer(step_cnt(6 downto 2)) is
-							when 12 => if rxd_r & hdr_shift(7 downto 2) /= x"88" then header_ok <= '0'; end if;
-							when 13 => if rxd_r & hdr_shift(7 downto 2) /= x"DD" then header_ok <= '0'; end if;
-							when 14 => if rxd_r & hdr_shift(7 downto 2) /= x"01" then header_ok <= '0'; end if;
+							when 12 => if rxd_r & hdr_shift(7 downto 2) /= x"88" then header_ok <= '0'; eth_ok <= '0'; end if;
+							when 13 => if rxd_r & hdr_shift(7 downto 2) /= x"DD" then header_ok <= '0'; eth_ok <= '0'; end if;
+							when 14 => if rxd_r & hdr_shift(7 downto 2) /= x"01" then header_ok <= '0'; eth_ok <= '0'; end if;
 							when 17 =>						-- frame type / flags
 								if (rxd_r & hdr_shift(7 downto 2)) = x"11" then
 									frame_assm <= '1';
 								end if;
 							when 18 =>						-- audio format must match fs_mode
-								if (fs48_i = '1' and (rxd_r & hdr_shift(7 downto 2)) /= x"46") or
-								   (fs48_i = '0' and (rxd_r & hdr_shift(7 downto 2)) /= x"06") then
+								hdr_fmt <= rxd_r & hdr_shift(7 downto 2);
+								if (fs96_i = '1' and (rxd_r & hdr_shift(7 downto 2)) /= FMT_96K) or
+								   (fs96_i = '0' and fs48_i = '1' and (rxd_r & hdr_shift(7 downto 2)) /= FMT_48K) or
+								   (fs48_i = '0' and (rxd_r & hdr_shift(7 downto 2)) /= FMT_44K1) then
 									header_ok <= '0';
 								end if;
 							when others => null;
@@ -289,6 +304,16 @@ begin
 
 					if step_cnt = 87 then
 						step_cnt <= (others => '0');
+						if eth_ok = '1' then
+							fmt_o <= hdr_fmt;
+							-- step 87 completes octet 21 (the format CRC-8): rxd_r & hdr_shift(7 downto 2)
+							if fmt_crc(hdr_fmt, frame_assm) = (rxd_r & hdr_shift(7 downto 2)) and
+							   (hdr_fmt = FMT_44K1 or hdr_fmt = FMT_48K or hdr_fmt = FMT_96K) then
+								fmt_valid_o <= '1';
+							else
+								fmt_bad_o <= '1';
+							end if;
+						end if;
 						if header_ok = '0' then
 							state <= S_SKIP;
 						else
@@ -438,6 +463,10 @@ begin
 
 				-- ------------------------------------------------------------
 				when S_FCS =>								-- compare with the computed CRC
+					-- A short frame must have ended before this word, even when CRS_DV toggles over an FCS.
+					if rx_dv_r = '1' then
+						short_ok <= '0';
+					end if;
 					if rxd_r /= not fcs_crc(1 downto 0) then
 						fcs_ok <= '0';
 					end if;
@@ -445,7 +474,8 @@ begin
 					step_cnt <= step_cnt + 1;
 					if step_cnt = 15 then
 						state <= S_SKIP;
-						frame_good := (rxd_r = not fcs_crc(1 downto 0) and fcs_ok = '1') or short_ok = '1';
+						frame_good := (rxd_r = not fcs_crc(1 downto 0) and fcs_ok = '1') or
+							(short_ok = '1' and rx_dv_r = '0');
 						if frame_good then
 							frame_ok_o <= '1';
 							if not (rxd_r = not fcs_crc(1 downto 0) and fcs_ok = '1') then

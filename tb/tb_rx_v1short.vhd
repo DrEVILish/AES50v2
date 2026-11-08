@@ -4,7 +4,7 @@
 -- FCS recomputed over the first 1426 bytes); full / short with CRS_DV toggling over the last 4 bytes (the PHY's
 -- behaviour at a frame end, seen on the PRO1 with a DL8); full / short with one payload bit flipped. Every good frame's
 -- block must be reported ok and bit-exact (all samples, all aux words); a corrupted one must not; frame_short_o must
--- count the good short frames.
+-- count the good short frames. A short checksum followed by extra bytes must be rejected.
 -- License: GPL-3.0-or-later
 library ieee;
 use ieee.std_logic_1164.all;
@@ -16,10 +16,10 @@ end entity;
 
 architecture sim of tb_rx_v1short is
 	-- what each block is sent as
-	type kind_t is (FULL, SHORT, FULL_TOGGLE, SHORT_TOGGLE, FULL_BAD, SHORT_BAD);
+	type kind_t is (FULL, SHORT, FULL_TOGGLE, SHORT_TOGGLE, FULL_BAD, SHORT_BAD, SHORT_EXTRA, SHORT_EXTRA_TOGGLE);
 	type plan_t is array (natural range <>) of kind_t;
 	constant PLAN : plan_t := (FULL, SHORT, SHORT, SHORT, FULL, FULL_TOGGLE, SHORT_TOGGLE, SHORT_BAD, FULL_BAD,
-							   SHORT, SHORT_TOGGLE, FULL, SHORT, FULL_TOGGLE, SHORT);
+							   SHORT, SHORT_TOGGLE, FULL, SHORT, FULL_TOGGLE, SHORT, SHORT_EXTRA, SHORT_EXTRA_TOGGLE, SHORT);
 	signal clk			: std_logic := '0';
 	signal rst			: std_logic := '1';
 	signal start, assm	: std_logic := '0';
@@ -133,9 +133,9 @@ begin
 		wait for 50 ns; rst <= '0';
 		for b in PLAN'range loop
 			k := PLAN(b);
-			is_short := k = SHORT or k = SHORT_TOGGLE or k = SHORT_BAD;
-			toggle := k = FULL_TOGGLE or k = SHORT_TOGGLE;
-			bad := k = FULL_BAD or k = SHORT_BAD;
+			is_short := k = SHORT or k = SHORT_TOGGLE or k = SHORT_BAD or k = SHORT_EXTRA or k = SHORT_EXTRA_TOGGLE;
+			toggle := k = FULL_TOGGLE or k = SHORT_TOGGLE or k = SHORT_EXTRA_TOGGLE;
+			bad := k = FULL_BAD or k = SHORT_BAD or k = SHORT_EXTRA or k = SHORT_EXTRA_TOGGLE;
 			-- frame the block
 			wait until rising_edge(clk);
 			blk <= b; if b = 0 then assm <= '1'; else assm <= '0'; end if;
@@ -155,7 +155,11 @@ begin
 				by(1426) := crc(7 downto 0); by(1427) := crc(15 downto 8); by(1428) := crc(23 downto 16); by(1429) := crc(31 downto 24);
 				nby := 1430;
 			end if;
-			if bad then by(600) := by(600) xor x"10"; end if;		-- one bit in the payload
+			if k = SHORT_EXTRA or k = SHORT_EXTRA_TOGGLE then
+				nby := 1434;
+				for i in 1430 to 1433 loop by(i) := x"00"; end loop;
+			end if;
+			if k = FULL_BAD or k = SHORT_BAD then by(600) := by(600) xor x"10"; end if;	-- one bit in the payload
 			-- replay: preamble + SFD, then the bytes; CRS_DV toggles (low on even dibits) over the last 4 bytes
 			n0 := ndone;
 			for i in 0 to 31 loop
