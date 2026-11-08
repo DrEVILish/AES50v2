@@ -26,7 +26,11 @@
 -- writes them in order with aux_tx_we_i (any time before the next block).
 -- A filled page is sent with the next block, an empty one as idle pattern.
 -- Aux from AES50: the 44 words of every good block are streamed out with
--- aux_rx_valid_o, aux_rx_first_o on the first.
+-- aux_rx_count_o words left to read; each aux_rx_rd_i takes the next one, which
+-- is on aux_rx_data_o from the next clock on (aux_rx_first_o with the block's
+-- first word): the timing of a FIFO with a registered read port. The words come straight from the receiver's aux page, so a consumer
+-- (an aux decoder) needs no FIFO of its own; it has the whole block period
+-- (125 us) to read them. A new good block restarts the count.
 -- fs96_i and sys_mode_i must be static while rst_i = '0'.
 
 library ieee;
@@ -82,7 +86,8 @@ entity aes50_par_core is
 		aux_tx_req_o			: out std_logic;
 		aux_tx_we_i				: in  std_logic;
 		aux_tx_data_i			: in  std_logic_vector(15 downto 0);
-		aux_rx_valid_o			: out std_logic;
+		aux_rx_count_o			: out unsigned(5 downto 0);
+		aux_rx_rd_i				: in  std_logic;
 		aux_rx_first_o			: out std_logic;
 		aux_rx_data_o			: out std_logic_vector(15 downto 0);
 
@@ -174,7 +179,7 @@ architecture rtl of aes50_par_core is
 	signal rxa_we			: std_logic;
 	signal rxa_waddr		: unsigned(7 downto 0);
 	signal rxa_wdata		: std_logic_vector(15 downto 0);
-	signal rxa_raddr		: unsigned(7 downto 0) := (others => '0');
+	signal rxa_raddr		: unsigned(7 downto 0);
 	signal rxa_rdata		: std_logic_vector(15 downto 0);
 	signal blk_done			: std_logic;
 	signal blk_base			: unsigned(AW - 1 downto 0);
@@ -190,11 +195,10 @@ architecture rtl of aes50_par_core is
 	signal st_addr			: unsigned(AW - 1 downto 0);
 	signal st_v_d, st_v_dd	: std_logic;
 	signal st_w_d, st_w_dd	: unsigned(5 downto 0);
-	signal sa_on			: std_logic;
+	signal sa_left			: unsigned(5 downto 0) := (others => '0');	-- aux words not read yet
 	signal sa_page			: std_logic;
 	signal sa_j				: unsigned(6 downto 0);
-	signal sa_v_d, sa_v_dd	: std_logic;
-	signal sa_f_d, sa_f_dd	: std_logic;
+	signal sa_f				: std_logic;
 
 begin
 
@@ -388,6 +392,10 @@ begin
 		end if;
 	end process;
 	tx_started_o <= tx_active;
+	aux_rx_count_o <= sa_left;
+	rxa_raddr      <= sa_page & sa_j;
+	aux_rx_data_o  <= rxa_rdata;
+	aux_rx_first_o <= sa_f;
 
 	u_tx_ram : entity work.aes50_dpram
 		generic map (G_AW => AW, G_DW => 24)
@@ -447,7 +455,7 @@ begin
 					st_w		<= (others => '0');
 					st_s		<= (others => '0');
 					st_addr		<= blk_base;
-					sa_on		<= '1';
+					sa_left		<= to_unsigned(44, 6);
 					sa_j		<= (others => '0');
 					sa_page		<= blk_page;
 				else
@@ -477,20 +485,16 @@ begin
 				par_out_phase_o	<= '0';
 			end if;
 			-- aux
-			sa_v_d <= sa_on;	sa_v_dd <= sa_v_d;
-			if sa_j = 0 then sa_f_d <= '1'; else sa_f_d <= '0'; end if;
-			sa_f_dd <= sa_f_d;
-			if sa_on = '1' then
-				rxa_raddr <= sa_page & sa_j;
-				sa_j <= sa_j + 1;
-				if sa_j = 43 then sa_on <= '0'; end if;
+			-- aux: the RAM reads the next unread word every clock (rxa_raddr follows the pointer), so a read
+			-- (aux_rx_rd_i) finds its word on the RAM output in the next clock and moves the pointer on
+			if aux_rx_rd_i = '1' and sa_left /= 0 and blk_done = '0' then
+				if sa_j = 0 then sa_f <= '1'; else sa_f <= '0'; end if;
+				sa_j		<= sa_j + 1;
+				sa_left		<= sa_left - 1;
 			end if;
-			aux_rx_valid_o	<= sa_v_dd;
-			aux_rx_first_o	<= sa_f_dd and sa_v_dd;
-			aux_rx_data_o	<= rxa_rdata;
 			if rx_rst = '1' then
 				st_on <= '0';
-				sa_on <= '0';
+				sa_left <= (others => '0');
 			end if;
 		end if;
 	end process;
