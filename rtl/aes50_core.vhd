@@ -259,7 +259,7 @@ architecture rtl of aes50_core is
 
 begin
 
-	fs48		<= fs_mode_i(0);
+	fs48		<= fs_mode_i(0) when G_SUPPORT_44K1 else '1';
 	i2s_mode	<= tdm8_i2s_mode_i;
 
 	-- ================================================================ resets
@@ -345,7 +345,7 @@ begin
 					bclk_readback_i	when (sys_mode_i(1) = '1' and core_rst = '0') else
 					'0';
 	pll_mult_value_o <= MULT_X16			when (sys_mode_i = "00" or (sys_mode_i(1) = '1' and i2s_mode = '1')) else
-						mult_clk625_44k1_i	when (sys_mode_i = "01" and fs_mode_i = "00") else
+						mult_clk625_44k1_i	when (sys_mode_i = "01" and fs48 = '0') else
 						mult_clk625_48k_i	when (sys_mode_i = "01") else
 						MULT_X4;
 
@@ -533,13 +533,52 @@ begin
 	end process;
 
 	gen_uart_dec : if G_UART_AUX generate
+		signal rd_addr : unsigned(7 downto 0);
+		signal rd_data : std_logic_vector(15 downto 0);
+		signal page : std_logic;
+		signal word_idx : unsigned(6 downto 0);
+		signal active : std_logic := '0';
+		signal phase : natural range 0 to 19 := 0;
+		signal dec_we : std_logic;
+	begin
+		-- Keep unvalidated words private; replay only a good block, at the decoder's word rate.
+		u_validated_aux : entity work.aes50_dpram
+			generic map (G_AW => 8, G_DW => 16)
+			port map (wclk_i => clk50_i, we_i => rxa_we, waddr_i => rxa_waddr, wdata_i => rxa_wdata,
+					  rclk_i => clk50_i, raddr_i => rd_addr, rdata_o => rd_data);
+		rd_addr <= page & word_idx;
+		dec_we <= '1' when active = '1' and phase = 2 and rx_rst = '0' else '0';
+		process (clk50_i)
+		begin
+			if rising_edge(clk50_i) then
+				if active = '1' then
+					if phase = 19 then
+						phase <= 0;
+						if (fs48 = '1' and word_idx = 43) or word_idx = 87 then
+							active <= '0';
+						else
+							word_idx <= word_idx + 1;
+						end if;
+					else
+						phase <= phase + 1;
+					end if;
+				end if;
+				if rx_blk_done = '1' and rx_blk_ok = '1' then
+					page <= rx_blk_page;
+					word_idx <= (others => '0');
+					phase <= 0;
+					active <= '1';
+				end if;
+				if rx_rst = '1' then active <= '0'; end if;
+			end if;
+		end process;
 		-- aux words 0 and 44 start an Ethernet frame (scrambler reset)
-		uart_dec_start <= '1' when rxa_waddr(6 downto 0) = 0 or rxa_waddr(6 downto 0) = C_AUX_WORDS_PER_FRAME else '0';
+		uart_dec_start <= '1' when word_idx = 0 or word_idx = C_AUX_WORDS_PER_FRAME else '0';
 		u_dec : entity work.aes50_aux_uart_dec
 			generic map (G_FIFO_AW => G_UART_FIFO_AW)
 			port map (
 				clk_i => clk50_i, rst_i => rx_rst,
-				aux_we_i => rxa_we, aux_data_i => rxa_wdata, aux_start_i => uart_dec_start,
+				aux_we_i => dec_we, aux_data_i => rd_data, aux_start_i => uart_dec_start,
 				clks_per_bit_i => uart_clks_per_bit_i, uart_o => uart_o);
 	end generate;
 	gen_no_uart_dec : if not G_UART_AUX generate

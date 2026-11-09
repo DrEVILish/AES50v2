@@ -241,6 +241,15 @@ begin
 
 				-- ------------------------------------------------------------
 				when S_HEADER =>							-- 22 octets = 88 dibits
+					if rx_dv_r = '0' then
+						state <= S_IDLE;
+						frame_err_o <= '1';
+						block_ok <= '0';
+						if fs48_i = '0' then
+							synced <= '0';
+							second_half <= '0';
+						end if;
+					else
 					fcs_crc		<= crc32_d2(fcs_crc, rxd_r);
 					hdr_shift	<= rxd_r & hdr_shift(7 downto 2);
 					step_cnt	<= step_cnt + 1;
@@ -328,6 +337,7 @@ begin
 								aux_word_addr <= (others => '0');
 							end if;
 						end if;
+					end if;
 					end if;
 
 				-- ------------------------------------------------------------
@@ -449,6 +459,11 @@ begin
 						state		<= S_IDLE;
 						frame_err_o	<= '1';
 						block_ok	<= '0';
+						-- A cut frame loses the two-frame phase at 44.1k; wait for ASSM.
+						if fs48_i = '0' then
+							synced <= '0';
+							second_half <= '0';
+						end if;
 					end if;
 
 				-- ------------------------------------------------------------
