@@ -257,7 +257,7 @@ architecture rtl of aes50_core is
 
 begin
 
-	fs48		<= fs_mode_i(0);
+	fs48		<= fs_mode_i(0) when G_SUPPORT_44K1 else '1';
 	i2s_mode	<= tdm8_i2s_mode_i;
 
 	-- ================================================================ resets
@@ -343,7 +343,7 @@ begin
 					bclk_readback_i	when (sys_mode_i(1) = '1' and core_rst = '0') else
 					'0';
 	pll_mult_value_o <= MULT_X16			when (sys_mode_i = "00" or (sys_mode_i(1) = '1' and i2s_mode = '1')) else
-						mult_clk625_44k1_i	when (sys_mode_i = "01" and fs_mode_i = "00") else
+						mult_clk625_44k1_i	when (sys_mode_i = "01" and fs48 = '0') else
 						mult_clk625_48k_i	when (sys_mode_i = "01") else
 						MULT_X4;
 

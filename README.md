@@ -80,7 +80,7 @@ The defaults give the same feature set of v1.
 
 | Generic | Default | Description |
 |---|---|---|
-| **G_SUPPORT_44K1** | `true` | `false`: 48k only, half-size sample RAMs |
+| **G_SUPPORT_44K1** | `true` | `false`: 48k only, half-size sample RAMs; overrides `fs_mode_i` to 48k, including the PLL ratio |
 | **G_UART_AUX** | `true` | aux channel over UART (`false` removes encoder, decoder and FIFOs) |
 | **G_TDM_AUX** | `true` | aux channel over the 7th TDM line (`false` removes the aux RAMs of the SerDes) |
 | **G_UART_FIFO_AW** | `11` | UART FIFOs with 2^n − 1 bytes |
