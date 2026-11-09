@@ -251,3 +251,7 @@ along with this IP core. If not, see <https://www.gnu.org/licenses/>.
 Third-party components included in this repository may be licensed under
 different terms (for example, GPLv3). These components retain their
 original licenses and are clearly marked in the source header.
+
+### PLL initialization failures
+
+The PLL controller latches `cs2x00_init_error_o` on an I2C NACK or a register write exceeding 1 ms, including the final ACK/STOP. It releases its I2C drivers and keeps `cs2x00_init_busy_o` high so the core stays in reset. An external reset or a changed multiplier starts a new attempt. Link health also requires synchronized PLL lock and the normal qualification interval after lock returns.
