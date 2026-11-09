@@ -319,9 +319,9 @@ begin
 					end if;
 				end if;
 				if tx_active = '1' then
-					if tx_frame_in_block = 5 then			-- the block ends with this period
+					if tx_frame_in_block = block_frames('1') - 1 then			-- the block ends with this period
 						tx_frame_in_block	<= (others => '0');
-						tx_block_addr		<= tx_frame_addr + 48;
+						tx_block_addr		<= tx_frame_addr + C_AUDIO_CHANNELS;
 						tx_block_cnt		<= tx_block_cnt + 1;
 						if framer_busy = '0' then
 							framer_start	<= '1';
@@ -339,14 +339,14 @@ begin
 					else
 						tx_frame_in_block <= tx_frame_in_block + 1;
 					end if;
-					tx_frame_addr <= tx_frame_addr + 48;
+					tx_frame_addr <= tx_frame_addr + C_AUDIO_CHANNELS;
 				elsif tx_aligned = '1' and
-					  frames_since_assm = to_unsigned(G_ASSM_FRAMES - 2 - G_TX_LEAD_ADJ - 5, 11) then
+					  frames_since_assm = to_unsigned(G_ASSM_FRAMES - 2 - G_TX_LEAD_ADJ - (block_frames('1') - 1), 11) then
 					tx_active			<= '1';
 					tx_frame_in_block	<= (others => '0');
 					tx_block_cnt		<= (others => '0');
-					tx_frame_addr		<= tx_frame_addr + 48;
-					tx_block_addr		<= tx_frame_addr + 48;
+					tx_frame_addr		<= tx_frame_addr + C_AUDIO_CHANNELS;
+					tx_block_addr		<= tx_frame_addr + C_AUDIO_CHANNELS;
 				end if;
 			end if;
 			if audio_clock_ok = '0' then
@@ -370,7 +370,7 @@ begin
 				txa_waddr	<= fill_page & fill_cnt;
 				txa_wdata	<= aux_tx_data_i;
 				fill_cnt	<= fill_cnt + 1;
-				if fill_cnt = 43 then
+				if fill_cnt = C_AUX_WORDS_PER_FRAME - 1 then
 					fill_busy	<= '0';
 					ready		<= '1';
 					ready_page	<= fill_page;
@@ -455,7 +455,7 @@ begin
 					st_w		<= (others => '0');
 					st_s		<= (others => '0');
 					st_addr		<= blk_base;
-					sa_left		<= to_unsigned(44, 6);
+					sa_left		<= to_unsigned(C_AUX_WORDS_PER_FRAME, 6);
 					sa_j		<= (others => '0');
 					sa_page		<= blk_page;
 				else
@@ -468,9 +468,9 @@ begin
 			if st_on = '1' then
 				rxr_raddr	<= st_addr;
 				st_addr		<= st_addr + 1;
-				if st_w = 47 then
+				if st_w = C_AUDIO_CHANNELS - 1 then
 					st_w <= (others => '0');
-					if st_s = 5 then st_on <= '0'; else st_s <= st_s + 1; end if;
+					if st_s = block_frames('1') - 1 then st_on <= '0'; else st_s <= st_s + 1; end if;
 				else
 					st_w <= st_w + 1;
 				end if;
