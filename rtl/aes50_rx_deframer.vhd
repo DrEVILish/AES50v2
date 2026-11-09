@@ -157,21 +157,11 @@ architecture rtl of aes50_rx_deframer is
 	signal aux_word_addr		: unsigned(6 downto 0);
 	signal aux_words			: std_logic_vector(63 downto 0);
 
-	function chunk_len(fs48 : std_logic) return unsigned is
-	begin
-		if fs48 = '1' then return to_unsigned(58, 7); else return to_unsigned(64, 7); end if;
-	end function;
 
 	function mul48(s : unsigned(3 downto 0)) return unsigned is
 		variable v : unsigned(G_AW + 5 downto 0) := resize(s, G_AW + 6);
 	begin
 		return resize(shift_left(v, 5) + shift_left(v, 4), G_AW);
-	end function;
-
-	-- RAM entries per block
-	function block_size(fs48 : std_logic) return unsigned is
-	begin
-		if fs48 = '1' then return to_unsigned(288, G_AW); else return to_unsigned(528 mod 2 ** G_AW, G_AW); end if;
 	end function;
 
 	-- shift one received bit into the sample pair if it is an audio bit
@@ -251,6 +241,15 @@ begin
 
 				-- ------------------------------------------------------------
 				when S_HEADER =>							-- 22 octets = 88 dibits
+					if rx_dv_r = '0' then
+						state <= S_IDLE;
+						frame_err_o <= '1';
+						block_ok <= '0';
+						if fs48_i = '0' then
+							synced <= '0';
+							second_half <= '0';
+						end if;
+					else
 					fcs_crc		<= crc32_d2(fcs_crc, rxd_r);
 					hdr_shift	<= rxd_r & hdr_shift(7 downto 2);
 					step_cnt	<= step_cnt + 1;
@@ -333,11 +332,12 @@ begin
 							use_pair1		<= '0';
 							ch_ofs			<= (others => '0');
 							if fs48_i = '0' and second_half = '1' and frame_assm = '0' then
-								aux_word_addr <= to_unsigned(44, 7);
+								aux_word_addr <= to_unsigned(C_AUX_WORDS_PER_FRAME, 7);
 							else
 								aux_word_addr <= (others => '0');
 							end if;
 						end if;
+					end if;
 					end if;
 
 				-- ------------------------------------------------------------
@@ -360,7 +360,7 @@ begin
 						if (bit0_idx = 47 or bit1_idx = 47) and synced = '1' then
 							wr_step <= "01";
 							if use_pair1 = '1' then
-								wr_addr <= row_addr + 48 + ch_ofs;
+								wr_addr <= row_addr + C_AUDIO_CHANNELS + ch_ofs;
 							else
 								wr_addr <= row_addr + ch_ofs;
 							end if;
@@ -415,7 +415,7 @@ begin
 						use_pair1		<= '0';
 						if block_idx = 31 then
 							block_idx <= (others => '0');
-							if row_idx = 10 then
+							if row_idx = C_ROWS_PER_FRAME - 1 then
 								state		<= S_FCS;
 								step_cnt	<= (others => '0');
 								fcs_ok		<= '1';
@@ -443,10 +443,10 @@ begin
 					bit1_idx	<= chunk_index(new_chunk_bit + 1, fs48_i);
 
 					-- OpenProSeries: a frame one word short sends its FCS where row 10 block 31 would be
-					if row_idx = 10 and block_idx = 30 and dibit_idx = 15 then
+					if row_idx = C_ROWS_PER_FRAME - 1 and block_idx = 30 and dibit_idx = 15 then
 						crc30		<= crc32_d2(fcs_crc, rxd_r);
 						short_ok	<= '1';
-					elsif row_idx = 10 and block_idx = 31 then
+					elsif row_idx = C_ROWS_PER_FRAME - 1 and block_idx = 31 then
 						if rxd_r /= not crc30(1 downto 0) then
 							short_ok <= '0';
 						end if;
@@ -455,10 +455,15 @@ begin
 
 					-- carrier lost inside the frame; not in row 10 block 31, which is a short frame's FCS, where the
 					-- PHY may toggle CRS_DV as it does in a full frame's FCS (ignored there, see S_FCS)
-					if rx_dv_r = '0' and dibit_idx(0) = '1' and not (row_idx = 10 and block_idx = 31) then
+					if rx_dv_r = '0' and dibit_idx(0) = '1' and not (row_idx = C_ROWS_PER_FRAME - 1 and block_idx = 31) then
 						state		<= S_IDLE;
 						frame_err_o	<= '1';
 						block_ok	<= '0';
+						-- A cut frame loses the two-frame phase at 44.1k; wait for ASSM.
+						if fs48_i = '0' then
+							synced <= '0';
+							second_half <= '0';
+						end if;
 					end if;
 
 				-- ------------------------------------------------------------
@@ -510,7 +515,7 @@ begin
 				else
 					blk_ok_o <= block_ok;
 				end if;
-				block_base	<= block_base + block_size(fs48_i);
+				block_base	<= block_base + to_unsigned(block_words(fs48_i) mod 2 ** G_AW, G_AW);
 				aux_page	<= not aux_page;
 			end if;
 
