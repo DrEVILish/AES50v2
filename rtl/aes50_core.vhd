@@ -135,7 +135,8 @@ entity aes50_core is
 
 		--uart speed configuration
 		uart_clks_per_bit_i					: in  natural range 0 to 65535;			-- 434 for 115200 baud (the UART's own range)
-		uart_timeout_clks_i					: in  natural range 0 to 16777215		-- 500000 for 10 ms (the UART's own range)
+		uart_timeout_clks_i					: in  natural range 0 to 16777215;		-- 500000 for 10 ms (the UART's own range)
+		uart_overflow_o : out std_logic := '0' -- pulse on rejected input or output bytes
 	);
 end aes50_core;
 
@@ -247,6 +248,7 @@ architecture rtl of aes50_core is
 	signal rx_blk_tgl		: std_logic := '0';
 	signal rx_base_hold		: unsigned(AW - 1 downto 0);
 	signal rx_page_hold		: std_logic;
+	signal enc_overflow, dec_overflow : std_logic;
 	signal uart_dec_start	: std_logic;
 
 	-- ------------------------------------------------------------ debug
@@ -257,6 +259,7 @@ architecture rtl of aes50_core is
 
 begin
 
+	uart_overflow_o <= enc_overflow or dec_overflow;
 	fs48		<= fs_mode_i(0);
 	i2s_mode	<= tdm8_i2s_mode_i;
 
@@ -489,13 +492,14 @@ begin
 				uart_i => uart_i, clks_per_bit_i => uart_clks_per_bit_i, timeout_clks_i => uart_timeout_clks_i,
 				fs48_i => fs48, req_i => uart_enc_req, req_page_i => uart_enc_page,
 				aux_we_o => uart_aux_we, aux_addr_o => uart_aux_waddr, aux_data_o => uart_aux_wdata,
-				done_o => uart_enc_done);
+				done_o => uart_enc_done, overflow_o => enc_overflow);
 		u_uart_aux_ram : entity work.aes50_dpram
 			generic map (G_AW => 8, G_DW => 16)
 			port map (wclk_i => clk50_i, we_i => uart_aux_we, waddr_i => uart_aux_waddr, wdata_i => uart_aux_wdata,
 					  rclk_i => clk50_i, raddr_i => uart_aux_raddr, rdata_o => uart_aux_rdata);
 	end generate;
 	gen_no_uart_enc : if not G_UART_AUX generate
+		enc_overflow <= '0';
 		uart_aux_rdata	<= (others => '0');
 		uart_enc_done	<= '0';
 	end generate;
@@ -538,9 +542,10 @@ begin
 			port map (
 				clk_i => clk50_i, rst_i => rx_rst,
 				aux_we_i => rxa_we, aux_data_i => rxa_wdata, aux_start_i => uart_dec_start,
-				clks_per_bit_i => uart_clks_per_bit_i, uart_o => uart_o);
+				clks_per_bit_i => uart_clks_per_bit_i, uart_o => uart_o, overflow_o => dec_overflow);
 	end generate;
 	gen_no_uart_dec : if not G_UART_AUX generate
+		dec_overflow <= '0';
 		uart_o <= '1';
 	end generate;
 

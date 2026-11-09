@@ -251,3 +251,7 @@ along with this IP core. If not, see <https://www.gnu.org/licenses/>.
 Third-party components included in this repository may be licensed under
 different terms (for example, GPLv3). These components retain their
 original licenses and are clearly marked in the source header.
+
+### UART flow and error status
+
+`uart_overflow_o` pulses in the 50 MHz domain when a UART auxiliary FIFO rejects a write. Short packets flush after `uart_timeout_clks_i`; continuous input also starts draining when the input FIFO is half full. Traffic above the configured UART or auxiliary link capacity can still overflow. `uart_clks_per_bit_i = 0` disables UART RX/TX (TX stays idle high); use a fixed nonzero bit time for normal operation.
