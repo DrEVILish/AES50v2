@@ -46,6 +46,15 @@ use ieee.numeric_std.all;
 
 package aes50_pkg is
 
+	constant C_AUDIO_CHANNELS : positive := 48;
+	constant C_ROWS_PER_FRAME : positive := 11;
+	constant C_AUX_WORDS_PER_FRAME : positive := C_ROWS_PER_FRAME * 4;
+	function block_frames(fs48 : std_logic) return positive;
+	function block_words(fs48 : std_logic) return positive;
+	function last_frame_idx(fs48 : std_logic) return unsigned;
+	function aux_words(fs48 : std_logic) return unsigned;
+	function chunk_len(fs48 : std_logic) return unsigned;
+
 	-- block kinds
 	constant K_AUDIO		: natural := 0;
 	constant K_AUX_EVEN		: natural := 1;		-- block 26 (LC24)
@@ -84,6 +93,32 @@ package aes50_pkg is
 end package;
 
 package body aes50_pkg is
+
+	function block_frames(fs48 : std_logic) return positive is
+	begin
+		if fs48 = '1' then return 6; else return 11; end if;
+	end function;
+
+	function block_words(fs48 : std_logic) return positive is
+	begin
+		return C_AUDIO_CHANNELS * block_frames(fs48);
+	end function;
+
+	function last_frame_idx(fs48 : std_logic) return unsigned is
+	begin
+		return to_unsigned(block_frames(fs48) - 1, 4);
+	end function;
+
+	function aux_words(fs48 : std_logic) return unsigned is
+	begin
+		if fs48 = '1' then return to_unsigned(C_AUX_WORDS_PER_FRAME, 7);
+		else return to_unsigned(2 * C_AUX_WORDS_PER_FRAME, 7); end if;
+	end function;
+
+	function chunk_len(fs48 : std_logic) return unsigned is
+	begin
+		if fs48 = '1' then return to_unsigned(58, 7); else return to_unsigned(64, 7); end if;
+	end function;
 
 	function block_kind(blk : unsigned(4 downto 0)) return natural is
 	begin

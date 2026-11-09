@@ -48,6 +48,8 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
+use work.aes50_pkg.all;
+
 entity aes50_core is
 	generic (
 		G_SUPPORT_44K1		: boolean := true;		-- false: half-size sample RAMs, 48k only
@@ -532,7 +534,7 @@ begin
 
 	gen_uart_dec : if G_UART_AUX generate
 		-- aux words 0 and 44 start an Ethernet frame (scrambler reset)
-		uart_dec_start <= '1' when rxa_waddr(6 downto 0) = 0 or rxa_waddr(6 downto 0) = 44 else '0';
+		uart_dec_start <= '1' when rxa_waddr(6 downto 0) = 0 or rxa_waddr(6 downto 0) = C_AUX_WORDS_PER_FRAME else '0';
 		u_dec : entity work.aes50_aux_uart_dec
 			generic map (G_FIFO_AW => G_UART_FIFO_AW)
 			port map (

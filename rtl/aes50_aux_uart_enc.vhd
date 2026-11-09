@@ -46,6 +46,8 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
+use work.aes50_pkg.all;
+
 entity aes50_aux_uart_enc is
 	generic (
 		G_FIFO_AW		: natural := 11			-- UART input FIFO: 2**G_FIFO_AW - 1 bytes
@@ -143,10 +145,10 @@ begin
 				page		<= req_page_i;
 				word_idx	<= (others => '0');
 				word_bit	<= 0;
-				if fs48_i = '1' then word_last <= to_unsigned(43, 7); else word_last <= to_unsigned(87, 7); end if;
+				word_last <= aux_words(fs48_i) - 1;
 			end if;
 
-			frame_start := word_bit = 0 and (word_idx = 0 or word_idx = 44);
+			frame_start := word_bit = 0 and (word_idx = 0 or word_idx = C_AUX_WORDS_PER_FRAME);
 
 			if active = '1' then
 				case state is
