@@ -66,6 +66,7 @@ begin
 	begin
 		if rising_edge(wclk_i) then
 			if we_i = '1' then
+				-- Xst:790 (index range / simulation mismatch) is expected when G_DEPTH < 2 ** G_AW: e.g. a 7-bit write address into the 96-word aux RAM (G_AUX_WORDS_PER_PAGE = 48); aes50_par_core's assertions keep it in range
 				ram(to_integer(waddr_i)) <= wdata_i;
 			end if;
 		end if;
@@ -74,6 +75,7 @@ begin
 	process (rclk_i)
 	begin
 		if rising_edge(rclk_i) then
+			-- Xst:790 (index range / simulation mismatch) is expected when G_DEPTH < 2 ** G_AW: e.g. a 7-bit read address into the 96-word aux RAM (G_AUX_WORDS_PER_PAGE = 48); aes50_par_core's assertions keep it in range
 			rdata_o <= ram(to_integer(raddr_i));
 		end if;
 	end process;
